@@ -1,0 +1,92 @@
+import os
+import zipfile
+import email
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report, confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns  # For heatmap visualization
+
+def extract_emails(zip_path, label, extract_base):
+    folder_name = os.path.splitext(os.path.basename(zip_path))[0]
+    extract_path = os.path.join(extract_base, folder_name)
+
+    # Unzip to the path
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(extract_path)
+
+    # If files are inside an inner folder like spam_2/spam_2/
+    for root, dirs, files in os.walk(extract_path):
+        if len(files) > 0:
+            email_folder = root
+            break
+
+    email_texts = []
+    for root, _, files in os.walk(email_folder):
+        for filename in files:
+            file_path = os.path.join(root, filename)
+            if not os.path.isfile(file_path):
+                continue
+
+            try:
+                with open(file_path, 'r', encoding='latin-1') as f:
+                    msg = email.message_from_file(f)
+                    body = ""
+                    if msg.is_multipart():
+                        for part in msg.walk():
+                            if part.get_content_type() == "text/plain":
+                                try:
+                                    body += part.get_payload(decode=True).decode('latin-1', errors='ignore')
+                                except:
+                                    body += str(part.get_payload())
+                    else:
+                        try:
+                            body = msg.get_payload(decode=True).decode('latin-1', errors='ignore')
+                        except:
+                            body = str(msg.get_payload())
+                    email_texts.append(body.strip())
+            except Exception as e:
+                print(f"Error reading {filename}: {e}")
+
+    return pd.DataFrame({'label': [label] * len(email_texts), 'text': email_texts})
+
+extract_base = r"C:\Users\vitta\OneDrive\Desktop"
+ham_zip = os.path.join(extract_base, "easy_ham.zip")
+spam_zip = os.path.join(extract_base, "spam_2.zip")
+
+ham_df = extract_emails(ham_zip, "ham", extract_base)
+spam_df = extract_emails(spam_zip, "spam", extract_base)
+df = pd.concat([ham_df, spam_df], ignore_index=True)
+
+print(f"Loaded {len(ham_df)} ham and {len(spam_df)} spam emails.")
+print(df['label'].value_counts())
+
+X = df['text']
+y = df['label'].map({'ham': 0, 'spam': 1})
+
+vectorizer = TfidfVectorizer(stop_words='english', max_features=3000)
+X_vec = vectorizer.fit_transform(X)
+
+X_train, X_test, y_train, y_test = train_test_split(X_vec, y, test_size=0.2, random_state=42)
+
+
+model = LogisticRegression(max_iter=1000)
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+print("\n=== Classification Report ===")
+print(classification_report(y_test, y_pred, target_names=["Ham", "Spam"]))
+
+print("\n=== Confusion Matrix ===")
+cm = confusion_matrix(y_test, y_pred)
+print(cm)
+
+plt.figure(figsize=(6, 5))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=["Ham", "Spam"], yticklabels=["Ham", "Spam"])
+plt.xlabel('Predicted')
+plt.ylabel('Actual')
+plt.title('Confusion Matrix Heatmap')
+plt.show()
